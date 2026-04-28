@@ -118,7 +118,7 @@ descriptions, and prefix argument support.
     "s" ("Sub-menu" :keymap kp-test--sub-map)
     "q" ("Quit" quit-window)
     "H" ("Popup (child-frame)" (lambda () (interactive)
-                                  (let ((keymap-popup-backend 'child-frame))
+                                  (let ((keymap-popup-backend #'keymap-popup-backend-child-frame))
                                     (keymap-popup kp-test--map))))
     :row
     :group "Inapt (entry-level)"

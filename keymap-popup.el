@@ -40,18 +40,49 @@
 (defcustom keymap-popup-display-action
   '(display-buffer-in-side-window (side . bottom))
   "Display action for the popup buffer.
-Only used when `keymap-popup-backend' is `side-window'.
+Only used by `keymap-popup-backend-side-window'.
 Common values:
   (display-buffer-in-side-window (side . bottom))  - frame-wide
   (display-buffer-below-selected)                  - current window only"
   :type 'sexp
   :group 'keymap-popup)
 
-(defcustom keymap-popup-backend 'side-window
-  "Display backend for the popup.
-`side-window' uses a bottom side window (works in terminal and GUI).
-`child-frame' uses a floating child frame (GUI only)."
-  :type '(choice (const side-window) (const child-frame))
+(defcustom keymap-popup-backend #'keymap-popup-backend-side-window
+  "Function returning a display backend plist (:show :fit :hide).
+Each backend function receives a single buffer argument.
+:show displays the buffer, :fit refits after content changes,
+:hide removes the display and cleans up."
+  :type '(choice (const :tag "Side window" keymap-popup-backend-side-window)
+                 (const :tag "Child frame" keymap-popup-backend-child-frame)
+                 function)
+  :group 'keymap-popup)
+
+(defcustom keymap-popup-child-frame-parameters
+  '((no-accept-focus . t)
+    (no-focus-on-map . t)
+    (min-width . t)
+    (min-height . t)
+    (border-width . 0)
+    (child-frame-border-width . 1)
+    (left-fringe . 0)
+    (right-fringe . 0)
+    (vertical-scroll-bars . nil)
+    (horizontal-scroll-bars . nil)
+    (menu-bar-lines . 0)
+    (tool-bar-lines . 0)
+    (tab-bar-lines . 0)
+    (no-other-frame . t)
+    (no-other-window . t)
+    (no-delete-other-windows . t)
+    (unsplittable . t)
+    (undecorated . t)
+    (cursor-type . nil)
+    (no-special-glyphs . t)
+    (desktop-dont-save . t))
+  "Frame parameters for the child-frame backend.
+These are merged with runtime parameters (parent-frame, minibuffer,
+visibility) when creating the child frame."
+  :type '(alist :key-type symbol :value-type sexp)
   :group 'keymap-popup)
 
 ;;; Faces
@@ -700,34 +731,14 @@ Drops entries whose command has no binding."
 
 (defun keymap-popup--show-child-frame (buf)
   "Display BUF in a child frame centered on the parent.
-Frame parameters follow show-paren.el's child frame pattern."
+Frame parameters are taken from `keymap-popup-child-frame-parameters'."
   (let* ((parent (selected-frame))
          (after-make-frame-functions nil)
          (frame (make-frame
                  `((parent-frame . ,parent)
                    (minibuffer . ,(minibuffer-window))
-                   (no-accept-focus . t)
-                   (no-focus-on-map . t)
-                   (min-width . t)
-                   (min-height . t)
-                   (border-width . 0)
-                   (child-frame-border-width . 1)
-                   (left-fringe . 0)
-                   (right-fringe . 0)
-                   (vertical-scroll-bars . nil)
-                   (horizontal-scroll-bars . nil)
-                   (menu-bar-lines . 0)
-                   (tool-bar-lines . 0)
-                   (tab-bar-lines . 0)
-                   (no-other-frame . t)
-                   (no-other-window . t)
-                   (no-delete-other-windows . t)
-                   (unsplittable . t)
-                   (undecorated . t)
-                   (cursor-type . nil)
-                   (no-special-glyphs . t)
-                   (desktop-dont-save . t)
-                   (visibility . nil))))
+                   (visibility . nil)
+                   ,@keymap-popup-child-frame-parameters)))
          (win (frame-root-window frame)))
     (set-window-buffer win buf)
     (set-window-dedicated-p win t)
@@ -752,17 +763,17 @@ Frame parameters follow show-paren.el's child frame pattern."
     (when (frame-parent frame)
       (delete-frame frame))))
 
-(defun keymap-popup--backend ()
-  "Return the display backend plist (:show :fit :hide)."
-  (pcase keymap-popup-backend
-    ('child-frame
-     (list :show #'keymap-popup--show-child-frame
-           :fit  #'keymap-popup--fit-child-frame
-           :hide #'keymap-popup--hide-child-frame))
-    (_
-     (list :show #'keymap-popup--show-side-window
-           :fit  #'keymap-popup--fit-side-window
-           :hide #'keymap-popup--hide-side-window))))
+(defun keymap-popup-backend-side-window ()
+  "Return a side-window display backend."
+  (list :show #'keymap-popup--show-side-window
+        :fit  #'keymap-popup--fit-side-window
+        :hide #'keymap-popup--hide-side-window))
+
+(defun keymap-popup-backend-child-frame ()
+  "Return a child-frame display backend."
+  (list :show #'keymap-popup--show-child-frame
+        :fit  #'keymap-popup--fit-child-frame
+        :hide #'keymap-popup--hide-child-frame))
 
 (defun keymap-popup--prepare-buffer ()
   "Create and configure the popup buffer."
@@ -995,7 +1006,7 @@ Sub-menu keys push a navigation stack.  C-u toggles prefix mode."
       (user-error "No descriptions in keymap"))
   (let* ((source (current-buffer))
          (buf (keymap-popup--prepare-buffer))
-         (backend (keymap-popup--backend))
+         (backend (funcall keymap-popup-backend))
          (raw (keymap-popup--collect-descriptions keymap))
          (descriptions (if (keymap-popup--meta keymap 'keymap-popup--annotated)
                            (keymap-popup--resolve-descriptions raw keymap)
