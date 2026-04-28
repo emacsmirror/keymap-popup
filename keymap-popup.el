@@ -533,7 +533,7 @@ Column widths are aligned across all rows."
                                                (keymap-popup--join-columns
 						cols "   " col-widths)
                                                "\n"))))
-    (concat doc (string-join sections "\n") "\n")))
+    (concat doc (mapconcat #'identity sections "\n") "\n")))
 
 ;;; Popup state
 
