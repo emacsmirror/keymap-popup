@@ -40,10 +40,18 @@
 (defcustom keymap-popup-display-action
   '(display-buffer-in-side-window (side . bottom))
   "Display action for the popup buffer.
+Only used when `keymap-popup-backend' is `side-window'.
 Common values:
   (display-buffer-in-side-window (side . bottom))  - frame-wide
   (display-buffer-below-selected)                  - current window only"
   :type 'sexp
+  :group 'keymap-popup)
+
+(defcustom keymap-popup-backend 'side-window
+  "Display backend for the popup.
+`side-window' uses a bottom side window (works in terminal and GUI).
+`child-frame' uses a floating child frame (GUI only)."
+  :type '(choice (const side-window) (const child-frame))
   :group 'keymap-popup)
 
 ;;; Faces
@@ -555,6 +563,8 @@ Switch variables are buffer-local there, so rendering must read
   "Non-nil when a sub-menu just popped, preventing cascading exit.")
 (defvar-local keymap-popup--hook-fn nil
   "The post-command-hook function for this popup session.")
+(defvar-local keymap-popup--display-backend nil
+  "The active display backend plist (:show :fit :hide).")
 
 ;;; Popup display
 
@@ -621,8 +631,8 @@ Suffixes with :stay-open dismiss and reopen instead."
       (keymap-popup--keymap-target descriptions key-str)
       (equal key-str "C-u")))
 
-(defun keymap-popup--refresh-buffer (buf win descriptions &optional docstring prefix-mode)
-  "Re-render popup BUF with DESCRIPTIONS, fit WIN.
+(defun keymap-popup--refresh-buffer (buf descriptions &optional docstring prefix-mode)
+  "Re-render popup BUF with DESCRIPTIONS, refit via backend.
 DOCSTRING is shown at the top if non-nil.  PREFIX-MODE toggles
 prefix argument highlighting."
   (let ((content (keymap-popup--render docstring descriptions prefix-mode)))
@@ -631,8 +641,9 @@ prefix argument highlighting."
         (erase-buffer)
         (insert content)
         (goto-char (point-min))))
-    (when (and win (window-live-p win))
-      (fit-window-to-buffer win))))
+    (when-let* ((fit (plist-get (buffer-local-value 'keymap-popup--display-backend buf)
+                                :fit)))
+      (funcall fit buf))))
 
 (defun keymap-popup--refresh (buf)
   "Re-render popup BUF from its buffer-local state.
@@ -644,8 +655,7 @@ switch variables sees the user's buffer-local values."
           (doc (buffer-local-value 'keymap-popup--active-docstring buf))
           (prefix (buffer-local-value 'keymap-popup--prefix-mode buf)))
       (with-current-buffer (if (buffer-live-p source) source buf)
-        (keymap-popup--refresh-buffer
-         buf (get-buffer-window buf) descs doc prefix)))))
+        (keymap-popup--refresh-buffer buf descs doc prefix)))))
 
 (defun keymap-popup--resolve-key (entry keymap)
   "Resolve ENTRY's :command to a key in KEYMAP.
@@ -666,22 +676,113 @@ Drops entries whose command has no binding."
                          when (keymap-popup--resolve-key entry keymap)
                          collect it)))))
 
+;;; Display backends
+
+(defun keymap-popup--show-side-window (buf)
+  "Display BUF in a side window."
+  (display-buffer buf (append keymap-popup-display-action
+                              '((window-height . fit-window-to-buffer))))
+  (when-let* ((win (get-buffer-window buf)))
+    (fit-window-to-buffer win)))
+
+(defun keymap-popup--fit-side-window (buf)
+  "Refit the side window displaying BUF."
+  (when-let* ((win (get-buffer-window buf)))
+    (when (window-live-p win)
+      (fit-window-to-buffer win))))
+
+(defun keymap-popup--hide-side-window (buf)
+  "Delete the side window displaying BUF."
+  (when-let* ((win (get-buffer-window buf)))
+    (delete-window win)))
+
+(defun keymap-popup--show-child-frame (buf)
+  "Display BUF in a child frame centered on the parent.
+Frame parameters follow show-paren.el's child frame pattern."
+  (let* ((parent (selected-frame))
+         (after-make-frame-functions nil)
+         (frame (make-frame
+                 `((parent-frame . ,parent)
+                   (minibuffer . ,(minibuffer-window))
+                   (no-accept-focus . t)
+                   (no-focus-on-map . t)
+                   (min-width . t)
+                   (min-height . t)
+                   (border-width . 0)
+                   (child-frame-border-width . 1)
+                   (left-fringe . 0)
+                   (right-fringe . 0)
+                   (vertical-scroll-bars . nil)
+                   (horizontal-scroll-bars . nil)
+                   (menu-bar-lines . 0)
+                   (tool-bar-lines . 0)
+                   (tab-bar-lines . 0)
+                   (no-other-frame . t)
+                   (no-other-window . t)
+                   (no-delete-other-windows . t)
+                   (unsplittable . t)
+                   (undecorated . t)
+                   (cursor-type . nil)
+                   (no-special-glyphs . t)
+                   (desktop-dont-save . t)
+                   (visibility . nil))))
+         (win (frame-root-window frame)))
+    (set-window-buffer win buf)
+    (set-window-dedicated-p win t)
+    (fit-frame-to-buffer frame)
+    (let ((x (/ (- (frame-pixel-width parent) (frame-pixel-width frame)) 2))
+          (y (/ (- (frame-pixel-height parent) (frame-pixel-height frame)) 2)))
+      (set-frame-position frame (max 0 x) (max 0 y)))
+    (make-frame-visible frame)
+    (redirect-frame-focus frame parent)))
+
+(defun keymap-popup--fit-child-frame (buf)
+  "Refit the child frame displaying BUF."
+  (when-let* ((win (get-buffer-window buf t))
+              (frame (window-frame win)))
+    (when (frame-parent frame)
+      (fit-frame-to-buffer frame))))
+
+(defun keymap-popup--hide-child-frame (buf)
+  "Delete the child frame displaying BUF."
+  (when-let* ((win (get-buffer-window buf t))
+              (frame (window-frame win)))
+    (when (frame-parent frame)
+      (delete-frame frame))))
+
+(defun keymap-popup--backend ()
+  "Return the display backend plist (:show :fit :hide)."
+  (pcase keymap-popup-backend
+    ('child-frame
+     (list :show #'keymap-popup--show-child-frame
+           :fit  #'keymap-popup--fit-child-frame
+           :hide #'keymap-popup--hide-child-frame))
+    (_
+     (list :show #'keymap-popup--show-side-window
+           :fit  #'keymap-popup--fit-side-window
+           :hide #'keymap-popup--hide-side-window))))
+
 (defun keymap-popup--prepare-buffer ()
   "Create and configure the popup buffer."
   (let ((buf (get-buffer-create "*keymap-popup*")))
     (with-current-buffer buf
       (setq-local buffer-read-only t
                   cursor-type nil
-                  mode-line-format nil))
+                  mode-line-format nil
+                  header-line-format nil
+                  tab-line-format nil
+                  left-margin-width 1
+                  right-margin-width 1))
     buf))
 
 (defun keymap-popup--teardown (buf)
-  "Remove the popup window for BUF, clean up hooks, and kill it."
+  "Remove the popup display for BUF, clean up hooks, and kill it."
   (when (buffer-live-p buf)
     (when-let* ((fn (buffer-local-value 'keymap-popup--hook-fn buf)))
       (remove-hook 'post-command-hook fn))
-    (when-let* ((win (get-buffer-window buf)))
-      (delete-window win))
+    (when-let* ((hide (plist-get (buffer-local-value 'keymap-popup--display-backend buf)
+                                 :hide)))
+      (funcall hide buf))
     (kill-buffer buf)))
 
 (defun keymap-popup--make-keep-pred (buf)
@@ -892,6 +993,7 @@ Sub-menu keys push a navigation stack.  C-u toggles prefix mode."
       (user-error "No descriptions in keymap"))
   (let* ((source (current-buffer))
          (buf (keymap-popup--prepare-buffer))
+         (backend (keymap-popup--backend))
          (raw (keymap-popup--collect-descriptions keymap))
          (descriptions (if (keymap-popup--meta keymap 'keymap-popup--annotated)
                            (keymap-popup--resolve-descriptions raw keymap)
@@ -904,15 +1006,13 @@ Sub-menu keys push a navigation stack.  C-u toggles prefix mode."
                   keymap-popup--active-keymap keymap
                   keymap-popup--active-descriptions descriptions
                   keymap-popup--active-docstring docstring
+                  keymap-popup--display-backend backend
                   keymap-popup--stack nil
                   keymap-popup--prefix-mode nil
                   keymap-popup--reentering nil
                   keymap-popup--hook-fn hook-fn))
     (keymap-popup--refresh buf)
-    (display-buffer buf (append keymap-popup-display-action
-                                '((window-height . fit-window-to-buffer))))
-    (when-let* ((win (get-buffer-window buf)))
-      (fit-window-to-buffer win))
+    (funcall (plist-get backend :show) buf)
     (add-hook 'post-command-hook hook-fn)
     (set-transient-map
      (keymap-popup--build-wrapper-map keymap descriptions buf exit-key)
