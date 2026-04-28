@@ -66,7 +66,7 @@ descriptions, and prefix argument support.
               (make-string 40 ?-) "\n\n"
               (format "  Name:     %s\n" (or kp-test--name "(not set)"))
               "\n"
-              (propertize "Press h for popup, H for post-frame, q to quit.\n" 'face 'shadow))))
+              (propertize "Press h for popup, H for child-frame, q to quit.\n" 'face 'shadow))))
 
   (defun kp-test--refresh ()
     "Refresh the display (stay-open)."
