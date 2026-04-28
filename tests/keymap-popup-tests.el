@@ -356,8 +356,8 @@
     (should (keymap-popup--keep-popup-p descs "v"))
     (should (keymap-popup--keep-popup-p descs "m"))
     (should (keymap-popup--keep-popup-p descs "a"))
-    ;; stay-open suffixes dismiss and reopen, not kept
-    (should-not (keymap-popup--keep-popup-p descs "g"))
+    ;; stay-open suffixes refresh in place, kept open
+    (should (keymap-popup--keep-popup-p descs "g"))
     (should (keymap-popup--keep-popup-p descs "C-u"))))
 
 ;;; C-u rendering tests

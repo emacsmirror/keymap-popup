@@ -594,8 +594,6 @@ Switch variables are buffer-local there, so rendering must read
   "Non-nil when C-u prefix mode is active.")
 (defvar-local keymap-popup--reentering nil
   "Non-nil when a sub-menu just popped, preventing cascading exit.")
-(defvar-local keymap-popup--hook-fn nil
-  "The post-command-hook function for this popup session.")
 (defvar-local keymap-popup--display-backend nil
   "The active display backend plist (:show :fit :hide).")
 
@@ -657,9 +655,9 @@ True for switches and suffixes with :stay-open."
 
 (defun keymap-popup--keep-popup-p (descriptions key-str)
   "Return non-nil if KEY-STR should keep the popup open.
-True for switches, inapt keys, :keymap entries, and C-u.
-Suffixes with :stay-open dismiss and reopen instead."
+True for switches, stay-open suffixes, inapt keys, :keymap entries, and C-u."
   (or (keymap-popup--infix-p descriptions key-str)
+      (keymap-popup--stay-open-p descriptions key-str)
       (keymap-popup--inapt-p descriptions key-str)
       (keymap-popup--keymap-target descriptions key-str)
       (equal key-str "C-u")))
@@ -789,10 +787,8 @@ Frame parameters are taken from `keymap-popup-child-frame-parameters'."
     buf))
 
 (defun keymap-popup--teardown (buf)
-  "Remove the popup display for BUF, clean up hooks, and kill it."
+  "Remove the popup display for BUF and kill it."
   (when (buffer-live-p buf)
-    (when-let* ((fn (buffer-local-value 'keymap-popup--hook-fn buf)))
-      (remove-hook 'post-command-hook fn))
     (when-let* ((hide (plist-get (buffer-local-value 'keymap-popup--display-backend buf)
                                  :hide)))
       (funcall hide buf))
@@ -812,17 +808,6 @@ Reads state from BUF.  Consumes the reentering flag on read."
 			(descs (buffer-local-value 'keymap-popup--active-descriptions buf)))
                (keymap-popup--keep-popup-p descs key-str))))))
 
-
-(defun keymap-popup--make-post-command-fn (buf)
-  "Return a post-command-hook function that refreshes BUF.
-Removes itself when BUF is killed externally."
-  (let ((fn (make-symbol "keymap-popup--post-command")))
-    (fset fn
-          (lambda ()
-            (if (not (buffer-live-p buf))
-                (remove-hook 'post-command-hook fn)
-              (keymap-popup--refresh buf))))
-    fn))
 
 (defun keymap-popup--make-on-exit (buf)
   "Return an on-exit callback for `set-transient-map'.
@@ -925,7 +910,8 @@ Includes keys with entry-level or group-level :inapt-if."
                   (setq-local keymap-popup--prefix-mode
                               (not keymap-popup--prefix-mode))
                   (setq prefix-arg
-                        (when keymap-popup--prefix-mode '(4))))))))
+                        (when keymap-popup--prefix-mode '(4))))
+                (keymap-popup--refresh buf)))))
 
 (defun keymap-popup--with-inapt-guard (buf key-str cmd)
   "Wrap CMD with a dynamic inapt check for KEY-STR.
@@ -959,17 +945,18 @@ Wraps the toggle command with prefix-mode consumption."
                     (when (buffer-local-value 'keymap-popup--prefix-mode buf)
                       (with-current-buffer buf
                         (setq-local keymap-popup--prefix-mode nil))
-                      (setq prefix-arg nil)))))
+                      (setq prefix-arg nil))
+                    (keymap-popup--refresh buf))))
           (keymap-popup--switch-keys descriptions)))
 
-(defun keymap-popup--stay-open-overrides (keymap descriptions)
+(defun keymap-popup--stay-open-overrides (keymap descriptions buf)
   "Return alist of stay-open suffix overrides.
-Each command dismisses the popup, executes, and reopens."
+Each command executes and refreshes the popup in place."
   (mapcar (lambda (key-str)
             (cons key-str
                   (lambda () (interactive)
                     (call-interactively (keymap-lookup keymap key-str))
-                    (keymap-popup keymap))))
+                    (keymap-popup--refresh buf))))
           (keymap-popup--stay-open-suffix-keys descriptions)))
 
 (defun keymap-popup--build-wrapper-map (keymap descriptions buf exit-key)
@@ -980,7 +967,7 @@ Inapt guards are applied as a layer over specialized handlers."
          (overrides (append (keymap-popup--core-overrides buf exit-key)
                             (keymap-popup--switch-overrides keymap descriptions buf)
                             (keymap-popup--submenu-overrides descriptions buf)
-                            (keymap-popup--stay-open-overrides keymap descriptions))))
+                            (keymap-popup--stay-open-overrides keymap descriptions buf))))
     (set-keymap-parent map keymap)
     (pcase-dolist (`(,key . ,cmd) overrides)
       (keymap-set map key
@@ -1012,8 +999,7 @@ Sub-menu keys push a navigation stack.  C-u toggles prefix mode."
                            (keymap-popup--resolve-descriptions raw keymap)
                          raw))
          (docstring (keymap-popup--meta keymap 'keymap-popup--description))
-         (exit-key (or (keymap-popup--meta keymap 'keymap-popup--exit-key) ?q))
-         (hook-fn (keymap-popup--make-post-command-fn buf)))
+         (exit-key (or (keymap-popup--meta keymap 'keymap-popup--exit-key) ?q)))
     (with-current-buffer buf
       (setq-local keymap-popup--source-buffer source
                   keymap-popup--active-keymap keymap
@@ -1022,11 +1008,9 @@ Sub-menu keys push a navigation stack.  C-u toggles prefix mode."
                   keymap-popup--display-backend backend
                   keymap-popup--stack nil
                   keymap-popup--prefix-mode nil
-                  keymap-popup--reentering nil
-                  keymap-popup--hook-fn hook-fn))
+                  keymap-popup--reentering nil))
     (keymap-popup--refresh buf)
     (funcall (plist-get backend :show) buf)
-    (add-hook 'post-command-hook hook-fn)
     (set-transient-map
      (keymap-popup--build-wrapper-map keymap descriptions buf exit-key)
      (keymap-popup--make-keep-pred buf)
