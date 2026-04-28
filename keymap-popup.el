@@ -688,14 +688,16 @@ Drops entries whose command has no binding."
   "Return a keep-pred for `set-transient-map'.
 Reads state from BUF.  Consumes the reentering flag on read."
   (lambda ()
-    (or (when (buffer-local-value 'keymap-popup--reentering buf)
-          (with-current-buffer buf
-            (setq-local keymap-popup--reentering nil))
-          t)
-        (and-let* ((keys (this-command-keys-vector))
-                   (key-str (key-description keys))
-                   (descs (buffer-local-value 'keymap-popup--active-descriptions buf)))
-          (keymap-popup--keep-popup-p descs key-str)))))
+    (and (buffer-live-p buf)
+         (or (when (buffer-local-value 'keymap-popup--reentering buf)
+               (with-current-buffer buf
+		 (setq-local keymap-popup--reentering nil))
+               t)
+             (and-let* ((keys (this-command-keys-vector))
+			(key-str (key-description keys))
+			(descs (buffer-local-value 'keymap-popup--active-descriptions buf)))
+               (keymap-popup--keep-popup-p descs key-str))))))
+
 
 (defun keymap-popup--make-post-command-fn (buf)
   "Return a post-command-hook function that refreshes BUF.
