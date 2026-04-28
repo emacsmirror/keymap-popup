@@ -531,7 +531,9 @@ Column widths are aligned across all rows."
   (let* ((resolved (when docstring
                      (keymap-popup--resolve-description docstring)))
          (doc (when resolved
-                (concat (propertize resolved 'face 'font-lock-doc-face)
+                (concat (if (text-properties-at 0 resolved)
+                            resolved
+                          (propertize resolved 'face 'font-lock-doc-face))
                         "\n")))
          (rendered-rows (keymap-popup--rows-to-columns rows prefix-mode))
          (col-widths (keymap-popup--global-col-widths rendered-rows))
