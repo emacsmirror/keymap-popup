@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2026  Free Software Foundation, Inc.
 
-;; Author: Thanos Apollo
+;; Author: Thanos Apollo <public@thanosapollo.org>
 ;; Version: 0.2.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience
