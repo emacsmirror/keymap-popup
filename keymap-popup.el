@@ -725,44 +725,56 @@ Pops the sub-menu stack if non-empty, otherwise tears down."
               (keymap-popup--refresh buf))
           (keymap-popup--teardown buf))))))
 
+(defun keymap-popup--collect-entries (descriptions fn)
+  "Collect non-nil results of (FN ENTRY GROUP) across DESCRIPTIONS.
+Walks rows, groups, and entries.  FN receives an entry plist and
+its parent group plist; non-nil return values are collected."
+  (mapcan (lambda (row)
+            (mapcan (lambda (group)
+                      (mapcan (lambda (entry)
+                                (and-let* ((result (funcall fn entry group)))
+                                  (list result)))
+                              (plist-get group :entries)))
+                    row))
+          descriptions))
+
 (defun keymap-popup--inapt-keys (descriptions)
-  "Return a list of key-strings that may be inapt in DESCRIPTIONS.
-Includes keys with entry-level :inapt-if and keys in groups with :inapt-if."
-  (cl-loop for row in descriptions
-           append (cl-loop for group in row
-                           for group-pred = (plist-get group :inapt-if)
-                           append (cl-loop for entry in (plist-get group :entries)
-                                           when (and (plist-get entry :key)
-                                                     (or (plist-get entry :inapt-if)
-                                                         group-pred))
-                                           collect (plist-get entry :key)))))
+  "Return key-strings that may be inapt in DESCRIPTIONS.
+Includes keys with entry-level or group-level :inapt-if."
+  (keymap-popup--collect-entries
+   descriptions
+   (lambda (entry group)
+     (when (and (plist-get entry :key)
+                (or (plist-get entry :inapt-if)
+                    (plist-get group :inapt-if)))
+       (plist-get entry :key)))))
 
 (defun keymap-popup--stay-open-suffix-keys (descriptions)
-  "Return list of key-strings for :stay-open suffix entries in DESCRIPTIONS."
-  (cl-loop for row in descriptions
-           append (cl-loop for group in row
-                           append (cl-loop for entry in (plist-get group :entries)
-                                           when (and (plist-get entry :key)
-                                                     (eq (plist-get entry :type) 'suffix)
-                                                     (plist-get entry :stay-open))
-                                           collect (plist-get entry :key)))))
+  "Return key-strings for :stay-open suffix entries in DESCRIPTIONS."
+  (keymap-popup--collect-entries
+   descriptions
+   (lambda (entry _group)
+     (when (and (plist-get entry :key)
+                (eq (plist-get entry :type) 'suffix)
+                (plist-get entry :stay-open))
+       (plist-get entry :key)))))
 
 (defun keymap-popup--switch-keys (descriptions)
-  "Return list of key-strings for switch entries in DESCRIPTIONS."
-  (cl-loop for row in descriptions
-           append (cl-loop for group in row
-                           append (cl-loop for entry in (plist-get group :entries)
-                                           when (eq (plist-get entry :type) 'switch)
-                                           collect (plist-get entry :key)))))
+  "Return key-strings for switch entries in DESCRIPTIONS."
+  (keymap-popup--collect-entries
+   descriptions
+   (lambda (entry _group)
+     (when (eq (plist-get entry :type) 'switch)
+       (plist-get entry :key)))))
 
 (defun keymap-popup--submenu-keys (descriptions)
-  "Return an alist of (KEY-STRING . TARGET-KEYMAP) for :keymap entries."
-  (cl-loop for row in descriptions
-           append (cl-loop for group in row
-                           append (cl-loop for entry in (plist-get group :entries)
-                                           when (eq (plist-get entry :type) 'keymap)
-                                           collect (cons (plist-get entry :key)
-                                                         (plist-get entry :target))))))
+  "Return alist of (KEY-STRING . TARGET-KEYMAP) for :keymap entries."
+  (keymap-popup--collect-entries
+   descriptions
+   (lambda (entry _group)
+     (when (eq (plist-get entry :type) 'keymap)
+       (cons (plist-get entry :key)
+             (plist-get entry :target))))))
 
 (defun keymap-popup--push-submenu (buf child-keymap)
   "Push current popup state and activate CHILD-KEYMAP's transient map."
