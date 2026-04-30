@@ -12,3 +12,4 @@ research
 *.info
 *.texi
 refs/*
+tests/live-test.el

@@ -167,12 +167,12 @@
 
 (ert-deftest keymap-popup-test-macro-exit-key ()
   (eval '(keymap-popup-define keymap-popup--test-exit-key
-           :exit-key ?x
+           :exit-key "x"
            "c" ("Comment" ignore))
         t)
-  (should (eq (keymap-popup--meta keymap-popup--test-exit-key
-                                  'keymap-popup--exit-key)
-              ?x)))
+  (should (equal (keymap-popup--meta keymap-popup--test-exit-key
+                                     'keymap-popup--exit-key)
+                 "x")))
 
 (ert-deftest keymap-popup-test-popup-key-with-docstring ()
   (eval '(keymap-popup-define keymap-popup--test-pkdoc
@@ -616,7 +616,7 @@
                                     'keymap-popup--descriptions))
          (buf (get-buffer-create "*keymap-popup-test*"))
          (map (keymap-popup--build-wrapper-map
-               keymap-popup--test-wrap descs buf ?q)))
+               keymap-popup--test-wrap descs buf "q")))
     (unwind-protect
         (progn
           (should (functionp (keymap-lookup map "q")))
@@ -631,7 +631,7 @@
                                     'keymap-popup--descriptions))
          (buf (get-buffer-create "*keymap-popup-test*"))
          (map (keymap-popup--build-wrapper-map
-               keymap-popup--test-wrap-cu descs buf ?q)))
+               keymap-popup--test-wrap-cu descs buf "q")))
     (unwind-protect
         (should (functionp (keymap-lookup map "C-u")))
       (kill-buffer buf))))
@@ -752,6 +752,56 @@
          (entries (plist-get (car (car descs)) :entries)))
     (should (= (length entries) 2))
     (should (eq (plist-get (car entries) :command) 'forward-char))))
+
+(ert-deftest keymap-popup-test-annotate-exit-key ()
+  "Annotate with :exit-key sets metadata."
+  (setq keymap-popup--test-annotate-map (make-sparse-keymap))
+  (keymap-set keymap-popup--test-annotate-map "a" #'forward-char)
+  (eval '(keymap-popup-annotate keymap-popup--test-annotate-map
+           :exit-key "x"
+           :group "Move"
+           forward-char "Forward")
+        t)
+  (should (equal (keymap-popup--meta keymap-popup--test-annotate-map
+                                     'keymap-popup--exit-key)
+                 "x")))
+
+(ert-deftest keymap-popup-test-annotate-popup-key ()
+  "Annotate with :popup-key binds the popup command."
+  (setq keymap-popup--test-annotate-map (make-sparse-keymap))
+  (keymap-set keymap-popup--test-annotate-map "a" #'forward-char)
+  (eval '(keymap-popup-annotate keymap-popup--test-annotate-map
+           :popup-key "?"
+           :group "Move"
+           forward-char "Forward")
+        t)
+  (should (functionp (keymap-lookup keymap-popup--test-annotate-map "?"))))
+
+(ert-deftest keymap-popup-test-annotate-description ()
+  "Annotate with :description sets metadata."
+  (setq keymap-popup--test-annotate-map (make-sparse-keymap))
+  (keymap-set keymap-popup--test-annotate-map "a" #'forward-char)
+  (eval '(keymap-popup-annotate keymap-popup--test-annotate-map
+           :description "My commands"
+           :group "Move"
+           forward-char "Forward")
+        t)
+  (should (equal (keymap-popup--meta keymap-popup--test-annotate-map
+                                     'keymap-popup--description)
+                 "My commands")))
+
+(ert-deftest keymap-popup-test-annotate-no-defaults-baked ()
+  "Annotate without keywords sets no exit-key or description metadata."
+  (setq keymap-popup--test-annotate-map (make-sparse-keymap))
+  (keymap-set keymap-popup--test-annotate-map "a" #'forward-char)
+  (eval '(keymap-popup-annotate keymap-popup--test-annotate-map
+           :group "Move"
+           forward-char "Forward")
+        t)
+  (should-not (keymap-popup--meta keymap-popup--test-annotate-map
+                                  'keymap-popup--exit-key))
+  (should-not (keymap-popup--meta keymap-popup--test-annotate-map
+                                  'keymap-popup--description)))
 
 ;;; Metadata tests
 

@@ -85,6 +85,16 @@ visibility) when creating the child frame."
   :type '(alist :key-type symbol :value-type sexp)
   :group 'keymap-popup)
 
+(defcustom keymap-popup-default-popup-key "h"
+  "Default key to open the popup in keymaps defined with `keymap-popup-define'."
+  :type 'string
+  :group 'keymap-popup)
+
+(defcustom keymap-popup-default-exit-key "q"
+  "Default key to dismiss the popup."
+  :type 'string
+  :group 'keymap-popup)
+
 ;;; Faces
 
 (defface keymap-popup-key
@@ -305,23 +315,23 @@ Uses list calls so lambdas get compiled."
 (defun keymap-popup--extract-macro-opts (body)
   "Extract macro options from BODY.
 Returns (DOCSTRING POPUP-KEY EXIT-KEY PARENT DESCRIPTION BINDINGS).
-A string followed by a list is a key binding, not a docstring."
+Unspecified keywords yield nil."
   (let* ((docstring (and (stringp (car body))
                          (or (null (cadr body))
                              (not (listp (cadr body))))
                          (car body)))
          (rest (if docstring (cdr body) body))
          (popup-pair (keymap-popup--consume-keyword rest :popup-key))
-         (popup-key (if popup-pair (car popup-pair) "h"))
+         (popup-key (and popup-pair (car popup-pair)))
          (rest (if popup-pair (cdr popup-pair) rest))
          (exit-pair (keymap-popup--consume-keyword rest :exit-key))
-         (exit-key (if exit-pair (car exit-pair) ?q))
+         (exit-key (and exit-pair (car exit-pair)))
          (rest (if exit-pair (cdr exit-pair) rest))
          (parent-pair (keymap-popup--consume-keyword rest :parent))
-         (parent (when parent-pair (car parent-pair)))
+         (parent (and parent-pair (car parent-pair)))
          (rest (if parent-pair (cdr parent-pair) rest))
          (desc-pair (keymap-popup--consume-keyword rest :description))
-         (description (when desc-pair (car desc-pair)))
+         (description (and desc-pair (car desc-pair)))
          (bindings (if desc-pair (cdr desc-pair) rest)))
     (list docstring popup-key exit-key parent description bindings)))
 
@@ -329,12 +339,15 @@ A string followed by a list is a key binding, not a docstring."
 (defmacro keymap-popup-define (name &rest body)
   "Define NAME as a keymap with embedded descriptions.
 BODY is an optional docstring, optional :popup-key KEY (default
-\"h\"), optional :exit-key CHAR (default ?q), optional :parent
+per `keymap-popup-default-popup-key'), optional :exit-key KEY
+\(default per `keymap-popup-default-exit-key'), optional :parent
 KEYMAP, optional :description STRING-OR-FUNCTION, followed by
 :group keywords and KEY (DESC ...) pairs."
   (declare (indent 1))
   (pcase-let* ((`(,docstring ,popup-key ,exit-key ,parent ,description ,bindings)
                 (keymap-popup--extract-macro-opts body))
+               (popup-key (or popup-key keymap-popup-default-popup-key))
+               (exit-key (or exit-key keymap-popup-default-exit-key))
                (rows (keymap-popup--parse-bindings bindings))
                (all-entries (cl-loop for row in rows
 				     append (cl-loop for group in row
@@ -360,18 +373,28 @@ KEYMAP, optional :description STRING-OR-FUNCTION, followed by
 ;;;###autoload
 (defmacro keymap-popup-annotate (keymap &rest body)
   "Annotate existing KEYMAP with popup descriptions.
-BODY is :group keywords and COMMAND-SYMBOL DESCRIPTION pairs.
+BODY is optional :popup-key KEY, optional :exit-key KEY, optional
+:description STRING-OR-FUNCTION, followed by :group keywords and
+COMMAND-SYMBOL DESCRIPTION pairs.
 COMMAND-SYMBOL is a function symbol already bound in the keymap.
 DESCRIPTION is a string or (STRING &rest PROPS).
 Keys are resolved dynamically via `where-is-internal' at display
 time, so the popup always reflects the user's current bindings."
   (declare (indent 1))
-  (let ((rows (keymap-popup--parse-bindings body)))
+  (pcase-let* ((`(,_docstring ,popup-key ,exit-key ,_parent ,description ,bindings)
+                (keymap-popup--extract-macro-opts body))
+               (rows (keymap-popup--parse-bindings bindings)))
     `(progn
        (setf (keymap-popup--meta ,keymap 'keymap-popup--descriptions)
              ,(keymap-popup--build-descriptions-form rows))
-       ;; t is the default binding in keymaps, lookup-key ignores it.
-       (setf (keymap-popup--meta ,keymap 'keymap-popup--annotated) 'yes))))
+       (setf (keymap-popup--meta ,keymap 'keymap-popup--annotated) 'yes)
+       ,@(when popup-key
+           `((keymap-set ,keymap ,popup-key
+                         (lambda () (interactive) (keymap-popup ,keymap)))))
+       ,@(when exit-key
+           `((setf (keymap-popup--meta ,keymap 'keymap-popup--exit-key) ,exit-key)))
+       ,@(when description
+           `((setf (keymap-popup--meta ,keymap 'keymap-popup--description) ,description))))))
 
 ;;; Public API
 
@@ -889,7 +912,8 @@ Includes keys with entry-level or group-level :inapt-if."
                       (keymap-popup--resolve-descriptions raw child-keymap)
                     raw))
            (doc (keymap-popup--meta child-keymap 'keymap-popup--description))
-           (exit-key (or (keymap-popup--meta child-keymap 'keymap-popup--exit-key) ?q)))
+           (exit-key (or (keymap-popup--meta child-keymap 'keymap-popup--exit-key)
+                         keymap-popup-default-exit-key)))
       (setq-local keymap-popup--active-keymap child-keymap
                   keymap-popup--active-descriptions descs
                   keymap-popup--active-docstring doc
@@ -902,7 +926,7 @@ Includes keys with entry-level or group-level :inapt-if."
 
 (defun keymap-popup--core-overrides (buf exit-key)
   "Return alist of core overrides: exit key and C-u prefix toggle."
-  (list (cons (key-description (vector exit-key))
+  (list (cons exit-key
               (lambda () (interactive)))
         (cons "C-u"
               (lambda () (interactive)
@@ -999,7 +1023,8 @@ Sub-menu keys push a navigation stack.  C-u toggles prefix mode."
                            (keymap-popup--resolve-descriptions raw keymap)
                          raw))
          (docstring (keymap-popup--meta keymap 'keymap-popup--description))
-         (exit-key (or (keymap-popup--meta keymap 'keymap-popup--exit-key) ?q)))
+         (exit-key (or (keymap-popup--meta keymap 'keymap-popup--exit-key)
+                       keymap-popup-default-exit-key)))
     (with-current-buffer buf
       (setq-local keymap-popup--source-buffer source
                   keymap-popup--active-keymap keymap
