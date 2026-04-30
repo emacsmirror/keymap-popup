@@ -86,12 +86,18 @@ visibility) when creating the child frame."
   :group 'keymap-popup)
 
 (defcustom keymap-popup-default-popup-key "h"
-  "Default key to open the popup in keymaps defined with `keymap-popup-define'."
+  "Default key to open the popup in keymaps defined with `keymap-popup-define'.
+Applied automatically by `keymap-popup-define' when :popup-key is
+not specified.  Not applied by `keymap-popup-annotate' (must be
+given explicitly)."
   :type 'string
   :group 'keymap-popup)
 
 (defcustom keymap-popup-default-exit-key "q"
-  "Default key to dismiss the popup."
+  "Default key to dismiss the popup.
+Applied automatically by `keymap-popup-define' when :exit-key is
+not specified.  For `keymap-popup-annotate', used as runtime
+fallback when :exit-key is omitted."
   :type 'string
   :group 'keymap-popup)
 
@@ -378,6 +384,12 @@ BODY is optional :popup-key KEY, optional :exit-key KEY, optional
 COMMAND-SYMBOL DESCRIPTION pairs.
 COMMAND-SYMBOL is a function symbol already bound in the keymap.
 DESCRIPTION is a string or (STRING &rest PROPS).
+
+Unlike `keymap-popup-define', no defaults are applied for
+:popup-key or :exit-key.  Only explicitly provided values take
+effect.  When :exit-key is omitted, the popup falls back to
+`keymap-popup-default-exit-key' at display time.
+
 Keys are resolved dynamically via `where-is-internal' at display
 time, so the popup always reflects the user's current bindings."
   (declare (indent 1))
